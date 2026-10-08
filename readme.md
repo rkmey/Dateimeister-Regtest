@@ -302,3 +302,6 @@ Für den Test brauchen wir ein kleines Bild, das `conftest.py` per
 Diese Suite wird schrittweise erweitert. Bei Fragen zur Struktur
 oder zu einzelnen Tests: die Docstrings der Testfunktionen sind
 die erste Anlaufstelle, `conftest.py` die zweite.
+
+GIT:
+Erster Git-Commit: 09.10.2026
