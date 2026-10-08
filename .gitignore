@@ -1,0 +1,18 @@
+# Testartefakte (nicht reproduzierbar, jedes Mal neu)
+artifacts/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Editor / Betriebssystem
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+*.swp
+
+# Logs
+*.log
