@@ -53,7 +53,11 @@ def _make_fake_event():
 def test_treeview_from_xml_builds_hierarchy(
         tk_root, tmp_xml, dummy_main, globals_event_manager,
         globals_screen, globals_datadir, fake_ur, silence_tooltips):
-    """Prüft, dass treeview_from_xml() die Kamera-Hierarchie aufbaut."""
+    """Prüft, dass treeview_from_xml() die Kamera-Hierarchie aufbaut.
+
+    Die Spalten sind col_modified, col_subdir, col_process (kein
+    col_rendertype mehr).
+    """
     win = make_camera_window(dummy_main)
     try:
         tv = win.tv
@@ -62,10 +66,9 @@ def test_treeview_from_xml_builds_hierarchy(
         iid_jpeg = find_child_iid_by_text(tv, iid_dia, "JPEG", tag="type")
         assert iid_jpeg is not None, "DIATISCH/JPEG fehlt"
         assert tv.item(iid_jpeg, "values")[1] == "Diatisch"
-        assert tv.item(iid_jpeg, "values")[2] == "STILL"
         iid_jpg = find_child_iid_by_text(tv, iid_jpeg, "JPG", tag="suffix")
         assert iid_jpg is not None, "DIATISCH/JPEG/JPG fehlt"
-        assert tv.item(iid_jpg, "values")[3] == "JPEG"
+        assert tv.item(iid_jpg, "values")[2] == "JPEG"
     finally:
         win.close_handler()
 
@@ -252,29 +255,6 @@ def test_apply_new_type_subdir(
         win.close_handler()
 
 
-def test_apply_new_type_rendertype(
-        tk_root, tmp_xml, dummy_main, globals_event_manager,
-        globals_screen, globals_datadir, fake_ur, silence_tooltips):
-    """TYPE_RENDERTYPE: rendertype wird geändert."""
-    win = make_camera_window(dummy_main)
-    try:
-        iid_cam = find_iid_by_text(win.tv, "DIATISCH", tag="camera")
-        iid_type = find_child_iid_by_text(win.tv, iid_cam, "JPEG", tag="type")
-        win.item = iid_type
-        win.text = "JPEG"
-        win.tag = "type"
-        win.camera, win.ctype, _ = win.get_camera_type(iid_type)
-        win.type_rendertype()
-        win.new_text(win.entry_rendertype, "VIDEO")
-        win.apply_new()
-
-        import dateimeister_config_xml as DX
-        result = DX.get_rendertypes_per_camera(tmp_xml)
-        assert result["DIATISCH"]["JPEG"] == "VIDEO"
-    finally:
-        win.close_handler()
-
-
 # ======================================================================
 # 4. Suffix-Aktionen
 # ======================================================================
@@ -448,7 +428,6 @@ def test_context_menu_on_type_node(
             labels.append(win.context_menu.entrycget(i, "label"))
         assert any("new suffix" in l for l in labels), labels
         assert any("subdir" in l for l in labels), labels
-        assert any("rendertype" in l for l in labels), labels
     finally:
         win.close_handler()
 
@@ -502,3 +481,4 @@ def test_apply_new_calls_historize(
         assert after > before, "historize_process wurde nicht aufgerufen"
     finally:
         win.close_handler()
+        

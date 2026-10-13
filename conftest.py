@@ -166,7 +166,6 @@ MINIMAL_XML = textwrap.dedent("""\
         <type name="JPEG">
           <suffix name="JPG"><process_image process="JPEG"/></suffix>
           <suffix name="JPEG"><process_image process="JPEG"/></suffix>
-          <rendertype rendertype="STILL"/>
           <subdir subdir="Diatisch"/>
         </type>
       </camera>
@@ -179,7 +178,6 @@ INCOMPLETE_XML = textwrap.dedent("""\
       <camera name="TESTCAM" usedate="20260101-00:00:00">
         <type name="JPEG">
           <suffix name="JPG"/>
-          <rendertype rendertype="STILL"/>
           <subdir subdir="test"/>
         </type>
       </camera>
@@ -274,16 +272,19 @@ class MiniThumbnail:
     Event-Handlern nur diese Methoden auf:
         - getState / setState
         - get_imagetype / set_imagetype
+        - get_process_type / set_process_type
         - getFile
         - get_filectime
         - get_filesize
         - metadata (Attribut)
     """
-    def __init__(self, file, imagetype="STILL", state=1, metadata=None):
+    def __init__(self, file, imagetype="STILL", state=1, metadata=None,
+                 process_type=None):
         from datetime import datetime
         self._file = file
         self._state = state
         self._imagetype = imagetype
+        self._process_type = process_type.upper() if process_type else None
         mts = os.stat(file).st_mtime
         self._ctime = datetime.fromtimestamp(mts).strftime('%Y-%m-%d %H:%M')
         self._size = os.stat(file).st_size / (1024.0 * 1024.0)
@@ -316,6 +317,12 @@ class MiniThumbnail:
 
     def set_imagetype(self, t):
         self._imagetype = t.upper()
+
+    def get_process_type(self):
+        return self._process_type
+
+    def set_process_type(self, t):
+        self._process_type = t.upper() if t else None
 
     def get_filectime(self):
         return self._ctime
@@ -368,7 +375,17 @@ def raw_thumbnail(test_raw):
     }
     return MiniThumbnail(test_raw, imagetype="RAW",
                          state=tools.INCLUDE, metadata=metadata)
-
+@pytest.fixture
+def raw_thumbnail_use_jpeg(test_raw):
+    """MiniThumbnail, das aussieht wie STILL, aber process_type=USE_JPEG
+    hat. Entspricht dem Fall, in dem der Canvas keinen Begleit-JPEG
+    gefunden hat und ein blaues Rechteck gezeichnet wurde. imagetype
+    ist 'STILL', weil das Thumbnail den RAW-Charakter nicht kennt;
+    MyFSImage soll das anhand von process_type selbst herausfinden."""
+    import tools
+    return MiniThumbnail(test_raw, imagetype="STILL",
+                         state=tools.INCLUDE, process_type="USE_JPEG")
+                      
 
 # ----------------------------------------------------------------------
 # Fake rawpy_loader
@@ -425,7 +442,47 @@ def fake_rawpy_loader_failing(monkeypatch):
     monkeypatch.setitem(sys.modules, "rawpy_loader", fake)
     return fake
 
+@pytest.fixture
+def fake_rawpy_loader_no_embedded(monkeypatch):
+    """Wie fake_rawpy_loader, aber load_raw_embedded liefert None.
+    Fuer den Test, dass MyFSImage bei USE_JPEG ohne Begleit-JPEG und
+    ohne RAW eine Warnung zeigt und das Fenster nicht oeffnet."""
+    class _Fake(FakeRawpyLoader):
+        def load_raw_embedded(self, file):
+            self.embedded_calls.append(file)
+            return None
+    fake = _Fake()
+    monkeypatch.setitem(sys.modules, "rawpy_loader", fake)
+    return fake
 
+@pytest.fixture
+def make_fsimage(tk_root, globals_event_manager, globals_datadir,
+                 silence_tooltips):
+    """Factory: baut ein MyFSImage mit sinnvollen Default-Strings.
+
+    Wird in test_fsimage.py von den USE_JPEG-Tests benutzt. Der Caller
+    ist ein frisches Dummy-Objekt, damit kein Parent-Fenster simuliert
+    werden muss.
+    """
+    import Dateimeister_FSimage as FSI
+
+    def _build(thumbnail, caller=None, **kw):
+        params = dict(
+            file=thumbnail.getFile(),
+            thumbnail=thumbnail,
+            caller=caller if caller is not None else object(),
+            str_title_prefix="Test: ",
+            str_include="Include",
+            str_exclude="Exclude",
+            str_included="included",
+            str_excluded="excluded",
+            debug=False,
+        )
+        params.update(kw)
+        return FSI.MyFSImage(**params)
+
+    return _build
+    
 # ----------------------------------------------------------------------
 # Globals
 # ----------------------------------------------------------------------
@@ -563,7 +620,6 @@ class DummyMain:
         self.dict_cameras = {}
         self.dict_subdirs = {}
         self.dict_process_image = {}
-        self.dict_rendertypes = {}
         self.get_camera_xml_calls = []
 
     def get_camera_xml(self, camera=None):
@@ -573,13 +629,12 @@ class DummyMain:
         cam = (camera or "").upper()
         dict_cameras = DX.get_cameras_types_suffixes(tools.Globals.config_files_xml)
         dict_s = dict(DX.get_subdirs_per_camera(tools.Globals.config_files_xml).get(cam, {}))
-        dict_rt = dict(DX.get_rendertypes_per_camera(tools.Globals.config_files_xml).get(cam, {}))
         dict_pi = {}
         for type_name, suffix_dict in DX.get_process_image_per_camera(
                 tools.Globals.config_files_xml).get(cam, {}).items():
             for suffix_name, process in suffix_dict.items():
                 dict_pi[suffix_name] = process
-        return dict_cameras, dict_s, dict_pi, dict_rt
+        return dict_cameras, dict_s, dict_pi
 
 
 @pytest.fixture

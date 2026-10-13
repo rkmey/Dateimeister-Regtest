@@ -16,6 +16,7 @@ Getestet werden:
   * Fullscreen (Flag, Frame-Eltern, Escape-Binding, Timer-Abbruch)
   * RAW-Toggle (embedded <-> full, Fehlerfall, ignoriert STILL)
   * _close_images schliesst alle Bilder
+  * USE_JPEG-Fallback auf RAW (mit und ohne Erfolg)
 
 Nicht getestet:
   * die tatsaechliche Bilddarstellung auf dem Canvas
@@ -137,6 +138,46 @@ def test_constructor_raises_without_imagetype(
     """Ohne imagetype im Thumbnail muss der Konstruktor eine Exception werfen."""
     with pytest.raises(RuntimeError):
         make_fsimage(mini_thumbnail_no_imagetype)
+
+
+def test_use_jpeg_without_companion_loads_raw(
+        tk_root, raw_thumbnail_use_jpeg, fake_rawpy_loader,
+        globals_event_manager):
+    """Bei process_type=USE_JPEG und fehlendem Begleit-JPEG faellt
+    MyFSImage auf den RAW-Loader zurueck, stellt imagetype lokal auf
+    'RAW' um und baut die RAW-Widgets.
+    """
+    fs = make_fsimage(raw_thumbnail_use_jpeg)
+    try:
+        # Der RAW-Loader wurde genau einmal mit der Originaldatei gerufen
+        assert len(fake_rawpy_loader.embedded_calls) == 1
+        assert fake_rawpy_loader.embedded_calls[0] == raw_thumbnail_use_jpeg.getFile()
+        # imagetype lokal auf RAW umgestellt, raw_mode auf embedded
+        assert fs.imagetype == "RAW"
+        assert fs.raw_mode == "embedded"
+        # Die RAW-Widgets existieren
+        assert hasattr(fs, "Button_raw")
+        assert hasattr(fs, "Label_rawinfo")
+        assert fs.Button_raw.cget("text") == "raw full"
+        assert fs.Label_rawinfo.cget("text") == "RAW using embedded"
+    finally:
+        fs.close_handler()
+
+
+def test_use_jpeg_without_companion_warns_when_raw_fails(
+        tk_root, raw_thumbnail_use_jpeg, fake_rawpy_loader_no_embedded,
+        globals_event_manager, _global_info_box_mock):
+    """Wenn der RAW-Loader den USE_JPEG-Fallback auch nicht oeffnen
+    kann, kommt eine Warnung, und das FSImage-Fenster oeffnet sich nicht.
+    """
+    with pytest.raises(RuntimeError):
+        make_fsimage(raw_thumbnail_use_jpeg)
+    # Eine Warnung wurde gezeigt
+    assert len(_global_info_box_mock) >= 1
+    # Ausdruecklich level='warnung', nicht 'fehler': sonst wuerde
+    # tools.info_box sys.exit() rufen und der Testprozess enden.
+    levels = [level for _, level in _global_info_box_mock]
+    assert "warnung" in levels, f"Keine Warnung gefeuert: {levels}"
 
 
 # ======================================================================
@@ -408,6 +449,7 @@ def test_toggle_fullscreen_sets_flag(
     finally:
         fs.close_handler()
 
+
 def test_exit_fullscreen_restores_layout(
         tk_root, test_image, mini_thumbnail, globals_event_manager):
     """exit_fullscreen bringt die Frames zurueck ins Root-Fenster."""
@@ -426,7 +468,8 @@ def test_exit_fullscreen_restores_layout(
             assert info.get("in") == fs.root
     finally:
         fs.close_handler()
-        
+
+
 def test_escape_binding_active_in_fullscreen(
         tk_root, test_image, mini_thumbnail, globals_event_manager):
     """In Fullscreen ist <Escape> an exit_fullscreen gebunden."""
