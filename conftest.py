@@ -264,6 +264,13 @@ def test_raw(sandbox):
 
 # ----------------------------------------------------------------------
 # Mini-Thumbnail fuer MyFSImage / MyFSVideo
+#
+# process_type ist die einzige Typinformation. Sie entspricht dem
+# <process_image process="..."/> aus der Kamera-Konfiguration:
+#     "JPEG"     -> STILL
+#     "USE_JPEG" -> STILL (mit Fallback auf RAW in der Detailansicht)
+#     "VIDEO"    -> VIDEO
+#     "RAW"      -> RAW
 # ----------------------------------------------------------------------
 class MiniThumbnail:
     """Minimaler Ersatz fuer tools.MyThumbnail.
@@ -271,19 +278,19 @@ class MiniThumbnail:
     MyFSImage und MyFSVideo rufen im Konstruktor und in den
     Event-Handlern nur diese Methoden auf:
         - getState / setState
-        - get_imagetype / set_imagetype
         - get_process_type / set_process_type
-        - getFile
+        - is_video / is_raw
+        - getShowfile / getFile
         - get_filectime
         - get_filesize
         - metadata (Attribut)
     """
-    def __init__(self, file, imagetype="STILL", state=1, metadata=None,
-                 process_type=None):
+    def __init__(self, file, process_type=None, state=1, metadata=None,
+                 showfile=None):
         from datetime import datetime
         self._file = file
+        self._showfile = showfile
         self._state = state
-        self._imagetype = imagetype
         self._process_type = process_type.upper() if process_type else None
         mts = os.stat(file).st_mtime
         self._ctime = datetime.fromtimestamp(mts).strftime('%Y-%m-%d %H:%M')
@@ -312,11 +319,14 @@ class MiniThumbnail:
     def getFile(self):
         return self._file
 
-    def get_imagetype(self):
-        return self._imagetype
+    def getShowfile(self):
+        return self._showfile if self._showfile is not None else self._file
 
-    def set_imagetype(self, t):
-        self._imagetype = t.upper()
+    def is_video(self):
+        return self._process_type == "VIDEO"
+
+    def is_raw(self):
+        return self._process_type == "RAW"
 
     def get_process_type(self):
         return self._process_type
@@ -333,15 +343,18 @@ class MiniThumbnail:
 
 @pytest.fixture
 def mini_thumbnail(test_image):
+    """STILL-Thumbnail (process_type=JPEG)."""
     import tools
-    return MiniThumbnail(test_image, imagetype="STILL", state=tools.INCLUDE)
+    return MiniThumbnail(test_image, process_type="JPEG",
+                         state=tools.INCLUDE)
 
 
 @pytest.fixture
 def mini_thumbnail_no_imagetype(test_image):
-    """MiniThumbnail mit imagetype=None fuer den Konstruktor-Fehlerfall."""
+    """MiniThumbnail ohne process_type (weder RAW noch VIDEO noch USE_JPEG)."""
     import tools
-    return MiniThumbnail(test_image, imagetype=None, state=tools.INCLUDE)
+    return MiniThumbnail(test_image, process_type=None,
+                         state=tools.INCLUDE)
 
 
 @pytest.fixture
@@ -353,7 +366,7 @@ def video_thumbnail(test_video):
         "Video 0": {"codec_name": "h264", "width": "1920", "height": "1080"},
         "Audio 0": {"codec_name": "aac", "channels": "2"},
     }
-    return MiniThumbnail(test_video, imagetype="VIDEO",
+    return MiniThumbnail(test_video, process_type="VIDEO",
                          state=tools.INCLUDE, metadata=metadata)
 
 
@@ -361,7 +374,7 @@ def video_thumbnail(test_video):
 def video_thumbnail_empty_metadata(test_video):
     """MiniThumbnail fuer ein Video, mit leeren Metadaten."""
     import tools
-    return MiniThumbnail(test_video, imagetype="VIDEO",
+    return MiniThumbnail(test_video, process_type="VIDEO",
                          state=tools.INCLUDE, metadata={})
 
 
@@ -373,19 +386,21 @@ def raw_thumbnail(test_raw):
         "RAW": {"Camera": "Nikon Z7", "ISO": "400"},
         "File": {"Size": "0"},
     }
-    return MiniThumbnail(test_raw, imagetype="RAW",
+    return MiniThumbnail(test_raw, process_type="RAW",
                          state=tools.INCLUDE, metadata=metadata)
+
+
 @pytest.fixture
 def raw_thumbnail_use_jpeg(test_raw):
     """MiniThumbnail, das aussieht wie STILL, aber process_type=USE_JPEG
     hat. Entspricht dem Fall, in dem der Canvas keinen Begleit-JPEG
-    gefunden hat und ein blaues Rechteck gezeichnet wurde. imagetype
-    ist 'STILL', weil das Thumbnail den RAW-Charakter nicht kennt;
-    MyFSImage soll das anhand von process_type selbst herausfinden."""
+    gefunden hat und ein blaues Rechteck gezeichnet wurde. is_raw() ist
+    False; MyFSImage soll anhand von process_type selbst herausfinden,
+    dass die Datei eigentlich RAW ist."""
     import tools
-    return MiniThumbnail(test_raw, imagetype="STILL",
-                         state=tools.INCLUDE, process_type="USE_JPEG")
-                      
+    return MiniThumbnail(test_raw, process_type="USE_JPEG",
+                         state=tools.INCLUDE)
+
 
 # ----------------------------------------------------------------------
 # Fake rawpy_loader
@@ -395,10 +410,11 @@ class FakeRawpyLoader:
 
     Zeichnet Aufrufe auf und liefert einfache PIL-Images.
     """
-    def __init__(self, fail_full=False):
+    def __init__(self, fail_full=False, embedded_returns_none=False):
         from PIL import Image
         self._Image = Image
         self.fail_full = fail_full
+        self.embedded_returns_none = embedded_returns_none
         self.embedded_calls = []
         self.full_calls = []
         self.metadata_calls = []
@@ -406,6 +422,8 @@ class FakeRawpyLoader:
 
     def load_raw_embedded(self, file):
         self.embedded_calls.append(file)
+        if self.embedded_returns_none:
+            return None
         return self._Image.new("RGB", (32, 24), color=(100, 150, 200))
 
     def load_raw_full(self, file):
@@ -416,15 +434,12 @@ class FakeRawpyLoader:
 
     def load_raw_metadata(self, file):
         self.metadata_calls.append(file)
-        return {
-            "RAW": {"Camera": "Nikon Z7", "ISO": "400"},
-        }
+        return {"RAW": {"Camera": "Nikon Z7", "ISO": "400"}}
 
     def load_raw_all_exif(self, file):
         self.all_exif_calls.append(file)
-        return {
-            "EXIF": {"Model": "Nikon Z7", "DateTimeOriginal": "2026:01:01 12:00:00"},
-        }
+        return {"EXIF": {"Model": "Nikon Z7",
+                         "DateTimeOriginal": "2026:01:01 12:00:00"}}
 
 
 @pytest.fixture
@@ -442,47 +457,19 @@ def fake_rawpy_loader_failing(monkeypatch):
     monkeypatch.setitem(sys.modules, "rawpy_loader", fake)
     return fake
 
+
 @pytest.fixture
 def fake_rawpy_loader_no_embedded(monkeypatch):
     """Wie fake_rawpy_loader, aber load_raw_embedded liefert None.
+
     Fuer den Test, dass MyFSImage bei USE_JPEG ohne Begleit-JPEG und
-    ohne RAW eine Warnung zeigt und das Fenster nicht oeffnet."""
-    class _Fake(FakeRawpyLoader):
-        def load_raw_embedded(self, file):
-            self.embedded_calls.append(file)
-            return None
-    fake = _Fake()
+    ohne RAW eine Warnung zeigt und das Fenster nicht oeffnet.
+    """
+    fake = FakeRawpyLoader(embedded_returns_none=True)
     monkeypatch.setitem(sys.modules, "rawpy_loader", fake)
     return fake
 
-@pytest.fixture
-def make_fsimage(tk_root, globals_event_manager, globals_datadir,
-                 silence_tooltips):
-    """Factory: baut ein MyFSImage mit sinnvollen Default-Strings.
 
-    Wird in test_fsimage.py von den USE_JPEG-Tests benutzt. Der Caller
-    ist ein frisches Dummy-Objekt, damit kein Parent-Fenster simuliert
-    werden muss.
-    """
-    import Dateimeister_FSimage as FSI
-
-    def _build(thumbnail, caller=None, **kw):
-        params = dict(
-            file=thumbnail.getFile(),
-            thumbnail=thumbnail,
-            caller=caller if caller is not None else object(),
-            str_title_prefix="Test: ",
-            str_include="Include",
-            str_exclude="Exclude",
-            str_included="included",
-            str_excluded="excluded",
-            debug=False,
-        )
-        params.update(kw)
-        return FSI.MyFSImage(**params)
-
-    return _build
-    
 # ----------------------------------------------------------------------
 # Globals
 # ----------------------------------------------------------------------
@@ -770,3 +757,143 @@ def pytest_runtest_teardown(item, nextitem):
             print(f"\n[teardown-warning] {item.nodeid}: offene Toplevel-Fenster: {titles}")
     except Exception:
         pass
+        
+        
+# ----------------------------------------------------------------------
+# MiniThumbnail: is_broken / set_broken ergaenzen
+#
+# display_duplicate() in Dateimeister_Duplicates.py ruft
+# thumbnail.is_broken() und myimage.set_broken(...) auf.
+# Die Basisklasse MiniThumbnail (oben) hat diese Methoden nicht.
+# Wir ergaenzen sie hier zentral, damit alle bestehenden Fixtures
+# (mini_thumbnail, raw_thumbnail, video_thumbnail, ...) sie erben.
+# ----------------------------------------------------------------------
+def _mini_thumbnail_is_broken(self):
+    return self._broken
+
+def _mini_thumbnail_set_broken(self, b):
+    self._broken = bool(b)
+
+# Bei jeder neuen Instanz _broken initialisieren. Wir haengen uns an
+# __init__ der bestehenden Klasse, damit wir MiniThumbnail oben nicht
+# anfassen muessen.
+_MiniThumbnail_orig_init = MiniThumbnail.__init__
+
+def _mini_thumbnail_init(self, *args, **kwargs):
+    self._broken = False
+    _MiniThumbnail_orig_init(self, *args, **kwargs)
+
+MiniThumbnail.__init__ = _mini_thumbnail_init
+MiniThumbnail.is_broken = _mini_thumbnail_is_broken
+MiniThumbnail.set_broken = _mini_thumbnail_set_broken
+
+
+# ----------------------------------------------------------------------
+# Dummy-Support-Caller fuer MyDuplicates
+# ----------------------------------------------------------------------
+class DummySupportCaller:
+    """Minimaler Ersatz fuer Dateimeister_support im MyDuplicates-Test.
+
+    MyDuplicates ruft:
+        caller.button_duplicates.config(state=...)
+        caller.win_duplicates = None
+        caller.stop_all_players()
+    """
+    def __init__(self, tk_root):
+        self.win_duplicates = None
+        self.stop_all_players_calls = 0
+        # echtes Tk-Widget, damit .config(state=...) funktioniert
+        self.button_duplicates = tk.Button(tk_root, text="duplicates")
+
+    def stop_all_players(self):
+        self.stop_all_players_calls += 1
+
+
+@pytest.fixture
+def dummy_support_caller(tk_root):
+    return DummySupportCaller(tk_root)
+
+
+# ----------------------------------------------------------------------
+# Globals fuer MyDuplicates
+# ----------------------------------------------------------------------
+@pytest.fixture
+def duplicates_globals(sandbox):
+    """Setzt Globals.imagetype, dict_duplicates, dict_thumbnails, outdir.
+
+    Liefert ein dict mit den Quelldateien einer synthetischen Dublette,
+    damit der Test weiss, welche Dateien er in Globals.dict_thumbnails
+    erwarten kann:
+
+        {
+            "target": "CALL_IMG_0001.JPG",
+            "sources": [path1, path2, path3],
+        }
+    """
+    import tools
+
+    # drei Testbilder erzeugen (JPEG-Thumbnails)
+    from PIL import Image
+    sources = []
+    for i in range(3):
+        p = os.path.join(sandbox.images, f"src_{i}.jpg")
+        Image.new("RGB", (32, 24), color=(i * 80, 100, 50)).save(p)
+        sources.append(p)
+
+    target = "CALL_IMG_0001.JPG"
+    imagetype = "JPEG"
+
+    old = {
+        "imagetype": tools.Globals.imagetype,
+        "dict_duplicates": tools.Globals.dict_duplicates,
+        "dict_thumbnails": tools.Globals.dict_thumbnails,
+        "outdir": tools.Globals.outdir,
+    }
+
+    tools.Globals.imagetype = imagetype
+    tools.Globals.dict_duplicates = {imagetype: {target: list(sources)}}
+    tools.Globals.dict_thumbnails = {imagetype: {}}
+    tools.Globals.outdir = "/tmp/duplicates_target"
+
+    # Fuer jede Quelldatei ein MiniThumbnail in dict_thumbnails legen.
+    for p in sources:
+        tools.Globals.dict_thumbnails[imagetype][p] = MiniThumbnail(
+            p, process_type="JPEG", state=tools.INCLUDE
+        )
+
+    try:
+        yield {"target": target, "sources": sources, "imagetype": imagetype}
+    finally:
+        tools.Globals.imagetype = old["imagetype"]
+        tools.Globals.dict_duplicates = old["dict_duplicates"]
+        tools.Globals.dict_thumbnails = old["dict_thumbnails"]
+        tools.Globals.outdir = old["outdir"]
+
+
+# ----------------------------------------------------------------------
+# Duplicates-Fenster
+# ----------------------------------------------------------------------
+@pytest.fixture
+def duplicates_window(
+        tk_root, dummy_support_caller, duplicates_globals, globals_event_manager,
+        silence_tooltips):
+    """Baut ein MyDuplicates-Fenster mit vorbereiteten Globals.
+
+    Cleanup via close_handler(). Die Fixture liefert ein Tupel
+    (window, caller, duplicates_info):
+
+        window           - das MyDuplicates-Objekt
+        caller           - der DummySupportCaller
+        duplicates_info  - dict aus duplicates_globals (target, sources, imagetype)
+    """
+    import Dateimeister_Duplicates as DD
+    window = DD.MyDuplicates(caller=dummy_support_caller, debug=False)
+    try:
+        yield window, dummy_support_caller, duplicates_globals
+    finally:
+        try:
+            window.close_handler()
+        except Exception:
+            pass
+            
+            

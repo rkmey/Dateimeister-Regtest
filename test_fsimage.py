@@ -133,29 +133,48 @@ def test_constructor_raw_creates_raw_button_and_label(
         fs.close_handler()
 
 
-def test_constructor_raises_without_imagetype(
-        tk_root, test_image, mini_thumbnail_no_imagetype, globals_event_manager):
-    """Ohne imagetype im Thumbnail muss der Konstruktor eine Exception werfen."""
+def test_constructor_raises_without_thumbnail(
+        tk_root, globals_event_manager):
+    """Ohne Thumbnail wirft MyFSImage einen RuntimeError."""
+    import Dateimeister_FSimage as FS
     with pytest.raises(RuntimeError):
-        make_fsimage(mini_thumbnail_no_imagetype)
+        FS.MyFSImage(
+            file=None,
+            thumbnail=None,
+            caller=None,
+            str_title_prefix="Test: ",
+            str_include="Include",
+            str_exclude="Exclude",
+            str_included="Included",
+            str_excluded="Excluded",
+            debug=False,
+        )
+
+
+def test_constructor_with_minimal_thumbnail_opens_as_still(
+        tk_root, test_image, mini_thumbnail_no_imagetype, globals_event_manager):
+    """Ein Thumbnail ohne process_type wird als STILL geoeffnet
+    (weder RAW noch VIDEO noch USE_JPEG)."""
+    fs = make_fsimage(mini_thumbnail_no_imagetype)
+    try:
+        assert fs.is_raw is False
+        assert fs.image is not None
+    finally:
+        fs.close_handler()
 
 
 def test_use_jpeg_without_companion_loads_raw(
         tk_root, raw_thumbnail_use_jpeg, fake_rawpy_loader,
         globals_event_manager):
     """Bei process_type=USE_JPEG und fehlendem Begleit-JPEG faellt
-    MyFSImage auf den RAW-Loader zurueck, stellt imagetype lokal auf
-    'RAW' um und baut die RAW-Widgets.
+    MyFSImage auf den RAW-Loader zurueck und schaltet in den RAW-Modus.
     """
     fs = make_fsimage(raw_thumbnail_use_jpeg)
     try:
-        # Der RAW-Loader wurde genau einmal mit der Originaldatei gerufen
         assert len(fake_rawpy_loader.embedded_calls) == 1
         assert fake_rawpy_loader.embedded_calls[0] == raw_thumbnail_use_jpeg.getFile()
-        # imagetype lokal auf RAW umgestellt, raw_mode auf embedded
-        assert fs.imagetype == "RAW"
+        assert fs.is_raw is True
         assert fs.raw_mode == "embedded"
-        # Die RAW-Widgets existieren
         assert hasattr(fs, "Button_raw")
         assert hasattr(fs, "Label_rawinfo")
         assert fs.Button_raw.cget("text") == "raw full"
@@ -172,10 +191,7 @@ def test_use_jpeg_without_companion_warns_when_raw_fails(
     """
     with pytest.raises(RuntimeError):
         make_fsimage(raw_thumbnail_use_jpeg)
-    # Eine Warnung wurde gezeigt
     assert len(_global_info_box_mock) >= 1
-    # Ausdruecklich level='warnung', nicht 'fehler': sonst wuerde
-    # tools.info_box sys.exit() rufen und der Testprozess enden.
     levels = [level for _, level in _global_info_box_mock]
     assert "warnung" in levels, f"Keine Warnung gefeuert: {levels}"
 
@@ -433,15 +449,11 @@ def test_toggle_fullscreen_sets_flag(
         fs.root.update_idletasks()
 
         # Der Canvas fuellt jetzt das gesamte Fenster.
-        # place_info() liefert die Werte als Strings und normalisiert
-        # '1.0' zu '1', deshalb vergleichen wir ueber float().
         info = fs.frame_canvas.place_info()
         assert float(info["relwidth"]) == 1.0
         assert float(info["relheight"]) == 1.0
 
         # Die beiden Kontrollframes sind jetzt Overlays im Canvas.
-        # place_info()["in"] enthaelt das Ziel-Widget als Objekt,
-        # nicht als String.
         info_1_1 = fs.frame_1_1.place_info()
         info_1_2 = fs.frame_1_2.place_info()
         assert info_1_1.get("in") == fs.frame_canvas
@@ -460,9 +472,6 @@ def test_exit_fullscreen_restores_layout(
         assert fs.is_fullscreen is False
         fs.root.update_idletasks()
 
-        # Nach exit_fullscreen sind die Frames wieder im Root-Fenster
-        # platziert. place_info()["in"] liefert das Ziel-Widget als
-        # Objekt, nicht als String.
         for frame in (fs.frame_1_1, fs.frame_1_2, fs.frame_2):
             info = frame.place_info()
             assert info.get("in") == fs.root
@@ -576,7 +585,7 @@ def test_on_button_raw_ignores_for_still(
     try:
         if hasattr(fs, "on_button_raw"):
             fs.on_button_raw()
-        assert fs.imagetype == "STILL"
+        assert fs.is_raw is False
     finally:
         fs.close_handler()
 
