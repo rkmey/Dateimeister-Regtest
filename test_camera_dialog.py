@@ -20,10 +20,9 @@ import pytest
 
 def make_camera_window(dummy_main, proctypes="jpeg,use_jpeg,video", debug=False,
                        cameraname="DIATISCH"):
-    import Dateimeister_support as DS
-    return DS.MyCameraTreeview(pmain=dummy_main, proctypes=proctypes,
-                               debug=debug, cameraname=cameraname)
-
+    from Dateimeister_camera import MyCameraTreeview
+    return MyCameraTreeview(pmain=dummy_main, proctypes=proctypes,
+                            debug=debug, cameraname=cameraname)
 
 def find_iid_by_text(tv, text, tag=None):
     for iid in tv.get_children(""):
