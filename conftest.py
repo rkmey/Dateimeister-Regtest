@@ -340,6 +340,29 @@ class MiniThumbnail:
     def get_filesize(self):
         return self._size
 
+# ----------------------------------------------------------------------
+# Fake Player
+# ----------------------------------------------------------------------
+
+class FakePlayer:
+    """Minimaler Ersatz für VideoPlayer. Zählt pstop/destroy-Aufrufe."""
+    def __init__(self, file="", running=False):
+        self.video_source = file
+        self.my_tag = "FakePlayer"
+        self._running = running
+        self.pstop_calls = 0
+        self.destroy_calls = 0
+
+    def getRun(self):
+        return self._running
+
+    def pstop(self):
+        self.pstop_calls += 1
+        self._running = False
+
+    def destroy(self):
+        self.destroy_calls += 1
+        
 
 @pytest.fixture
 def mini_thumbnail(test_image):
@@ -813,6 +836,36 @@ class DummySupportCaller:
 def dummy_support_caller(tk_root):
     return DummySupportCaller(tk_root)
 
+# ----------------------------------------------------------------------
+# MiniThumbnail: getPlayer / setPlayer ergaenzen (fuer stop_all_players)
+# ----------------------------------------------------------------------
+def _mini_thumbnail_get_player(self):
+    return getattr(self, "_player", None)
+
+def _mini_thumbnail_set_player(self, player):
+    self._player = player
+
+def _mini_thumbnail_delete_player(self):
+    """Analog zu MyThumbnail.delete_player: pstop + destroy + None."""
+    p = getattr(self, "_player", None)
+    if p is not None:
+        try:
+            p.pstop()
+            p.destroy()
+        except Exception:
+            pass
+        self._player = None
+
+_MiniThumbnail_init_with_player = MiniThumbnail.__init__
+
+def _mini_thumbnail_init_with_player(self, *args, **kwargs):
+    self._player = None
+    _MiniThumbnail_init_with_player(self, *args, **kwargs)
+
+MiniThumbnail.__init__ = _mini_thumbnail_init_with_player
+MiniThumbnail.getPlayer = _mini_thumbnail_get_player
+MiniThumbnail.setPlayer = _mini_thumbnail_set_player
+MiniThumbnail.delete_player = _mini_thumbnail_delete_player
 
 # ----------------------------------------------------------------------
 # Globals fuer MyDuplicates
@@ -893,4 +946,29 @@ def duplicates_window(
         except Exception:
             pass
             
+# ----------------------------------------------------------------------
+# Duplicates-Fenster with player
+# ----------------------------------------------------------------------
+@pytest.fixture
+def duplicates_window_with_players(duplicates_window):
+    """Wie duplicates_window, aber display_duplicate wurde aufgerufen,
+    und an die Duplikat-Thumbnails sind FakePlayer gehaengt."""
+    win, caller, info = duplicates_window
+    win.display_duplicate(info["target"])
+    imagetype = info["imagetype"]
+    thumbs = win.thumbnails_duplicates[imagetype]
+    # Alle bis auf den ersten bekommen einen laufenden Player.
+    # Der erste bekommt einen pausierten Player.
+    players = []
+    for i, t in enumerate(thumbs):
+        p = FakePlayer(file=t.getFile(), running=(i != 0))
+        t.setPlayer(p)
+        players.append(p)
+    try:
+        yield win, caller, info, players
+    finally:
+        try:
+            win.close_handler()
+        except Exception:
+            pass
             

@@ -406,3 +406,151 @@ def test_roundtrip_canvas_exclude_updates_thumbnail_via_event(
     win.canvas_exclude(_FakeMouseEvent(x=5, y=5))
     assert win.dict_thumbnails_duplicates[imagetype][first].getState() == INCLUDE
     
+# ======================================================================
+# Block F: close_handler
+# ======================================================================
+
+def test_close_handler_calls_stop_all_players(duplicates_window, monkeypatch):
+    """close_handler ruft MyDuplicates.stop_all_players() auf."""
+    win, caller, info = duplicates_window
+    calls = []
+    original = win.stop_all_players
+    def spy():
+        calls.append(True)
+        return original()
+    monkeypatch.setattr(win, "stop_all_players", spy)
+
+    win.close_handler()
+
+    assert len(calls) >= 1
+
+def test_close_handler_unbinds_file_state_changed(
+        duplicates_window, globals_event_manager):
+    """Nach close_handler ist on_file_state_changed nicht mehr registriert."""
+    win, caller, info = duplicates_window
+    assert win.on_file_state_changed in globals_event_manager.listeners["FileStateChanged"]
+
+    win.close_handler()
+
+    listeners = globals_event_manager.listeners.get("FileStateChanged", [])
+    assert win.on_file_state_changed not in listeners
+
+
+def test_close_handler_unbinds_closing(
+        duplicates_window, globals_event_manager):
+    """Nach close_handler ist on_closing nicht mehr registriert."""
+    win, caller, info = duplicates_window
+    assert win.on_closing in globals_event_manager.listeners["Closing"]
+
+    win.close_handler()
+
+    listeners = globals_event_manager.listeners.get("Closing", [])
+    assert win.on_closing not in listeners
+
+
+def test_close_handler_fires_closing_event(
+        duplicates_window, globals_event_manager):
+    """close_handler feuert ein Closing-Event (mit filename=None)."""
+    win, caller, info = duplicates_window
+    received = []
+    globals_event_manager.bind("Closing", lambda e: received.append(e))
+
+    win.close_handler()
+
+    # mindestens ein Closing-Event mit filename=None und obj=win
+    ours = [e for e in received
+            if isinstance(e, ClosingEvent) and e.filename is None and e.obj is win]
+    assert len(ours) >= 1
+
+
+def test_close_handler_enables_caller_button(duplicates_window):
+    """Nach close_handler ist caller.button_duplicates wieder NORMAL."""
+    win, caller, info = duplicates_window
+    import tkinter as tk
+    # Vorab-Zustand: DISABLED (vom Konstruktor)
+    assert str(caller.button_duplicates.cget("state")) == str(tk.DISABLED)
+
+    win.close_handler()
+
+    assert str(caller.button_duplicates.cget("state")) == str(tk.NORMAL)
+
+
+def test_close_handler_clears_caller_win_duplicates(duplicates_window):
+    """Nach close_handler ist caller.win_duplicates None."""
+    win, caller, info = duplicates_window
+    caller.win_duplicates = win  # simulieren
+
+    win.close_handler()
+
+    assert caller.win_duplicates is None
+
+
+def test_close_handler_destroys_window(duplicates_window):
+    """Nach close_handler existiert das Fenster nicht mehr."""
+    win, caller, info = duplicates_window
+    win.close_handler()
+
+    assert not win.root.winfo_exists()
+    
+# ======================================================================
+# Block G: stop_all_players
+# ======================================================================
+
+def test_stop_all_players_disables_caller_button(duplicates_window):
+    """stop_all_players setzt caller.button_duplicates auf DISABLED."""
+    win, caller, info = duplicates_window
+    import tkinter as tk
+    caller.button_duplicates.config(state=tk.NORMAL)
+
+    win.stop_all_players()
+
+    assert str(caller.button_duplicates.cget("state")) == str(tk.DISABLED)
+
+
+def test_stop_all_players_stops_running_players(duplicates_window_with_players):
+    """Player mit getRun()==True bekommen pstop()."""
+    win, caller, info, players = duplicates_window_with_players
+    running = [p for p in players if p.getRun()]
+    assert running, "Fixture muss mindestens einen laufenden Player haben"
+
+    win.stop_all_players()
+
+    for p in running:
+        assert p.pstop_calls >= 1
+
+
+def test_stop_all_players_skips_paused_players(duplicates_window_with_players):
+    """Player mit getRun()==False bekommen kein pstop()."""
+    win, caller, info, players = duplicates_window_with_players
+    paused = [p for p in players if not p.getRun()]
+    assert paused, "Fixture muss mindestens einen pausierten Player haben"
+
+    win.stop_all_players()
+
+    for p in paused:
+        assert p.pstop_calls == 0
+
+
+def test_stop_all_players_without_thumbnails_is_safe(duplicates_window):
+    """Wenn noch keine Duplikate geladen sind, ist stop_all_players ein No-Op
+    (nur caller.button_duplicates wird disabled)."""
+    win, caller, info = duplicates_window
+    # display_duplicate absichtlich NICHT aufgerufen
+    assert win.thumbnails_duplicates == {}
+
+    # darf nicht crashen
+    win.stop_all_players()
+
+
+def test_stop_all_players_unknown_imagetype_is_safe(duplicates_window):
+    """Wenn Globals.imagetype nicht in thumbnails_duplicates ist, kein Fehler."""
+    win, caller, info = duplicates_window
+    import tools
+    # imagetype umstellen, sodass er nicht in thumbnails_duplicates steht
+    old = tools.Globals.imagetype
+    tools.Globals.imagetype = "GIBT_ES_NICHT"
+    try:
+        # darf nicht crashen
+        win.stop_all_players()
+    finally:
+        tools.Globals.imagetype = old
