@@ -819,7 +819,7 @@ def dummy_support_caller(tk_root):
 # ----------------------------------------------------------------------
 @pytest.fixture
 def duplicates_globals(sandbox):
-    """Setzt Globals.imagetype, dict_duplicates, dict_thumbnails, outdir.
+    """Setzt Globals.imagetype, dict_duplicates, dict_thumbnails.
 
     Liefert ein dict mit den Quelldateien einer synthetischen Dublette,
     damit der Test weiss, welche Dateien er in Globals.dict_thumbnails
@@ -847,13 +847,11 @@ def duplicates_globals(sandbox):
         "imagetype": tools.Globals.imagetype,
         "dict_duplicates": tools.Globals.dict_duplicates,
         "dict_thumbnails": tools.Globals.dict_thumbnails,
-        "outdir": tools.Globals.outdir,
     }
 
     tools.Globals.imagetype = imagetype
     tools.Globals.dict_duplicates = {imagetype: {target: list(sources)}}
     tools.Globals.dict_thumbnails = {imagetype: {}}
-    tools.Globals.outdir = "/tmp/duplicates_target"
 
     # Fuer jede Quelldatei ein MiniThumbnail in dict_thumbnails legen.
     for p in sources:
@@ -867,7 +865,6 @@ def duplicates_globals(sandbox):
         tools.Globals.imagetype = old["imagetype"]
         tools.Globals.dict_duplicates = old["dict_duplicates"]
         tools.Globals.dict_thumbnails = old["dict_thumbnails"]
-        tools.Globals.outdir = old["outdir"]
 
 
 # ----------------------------------------------------------------------

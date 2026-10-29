@@ -43,11 +43,11 @@ def test_constructor_creates_window(duplicates_window):
     assert win.root.winfo_exists()
 
 
-def test_constructor_title_contains_outdir(duplicates_window):
-    """Der Fenstertitel enthaelt Globals.outdir."""
+def test_constructor_title_contains_imagetype(duplicates_window):
+    """Der Fenstertitel enthaelt Globals.imagetype."""
     win, caller, info = duplicates_window
     import tools
-    assert tools.Globals.outdir in win.root.title()
+    assert tools.Globals.imagetype in win.root.title()
 
 
 def test_constructor_populates_listbox_from_dict_duplicates(
