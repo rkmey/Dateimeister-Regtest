@@ -37,6 +37,7 @@ import os
 import sys
 import shutil
 import textwrap
+import time
 import tkinter as tk
 
 import pytest
@@ -972,3 +973,75 @@ def duplicates_window_with_players(duplicates_window):
         except Exception:
             pass
             
+
+
+# ----------------------------------------------------------------------
+# Tk-Hilfen fuer Tests mit Hintergrundthreads (tools.DirChecker u.a.)
+#
+#   pump(root, cond, timeout=5.0)  treibt die Tk-Eventloop, bis cond() wahr ist
+#   tk_frame                       Frame als Container fuer Test-Widgets (kein Toplevel)
+#   dirchk                         tools.DirChecker(tk_root); prueft im Teardown, dass
+#                                  keine Hintergrundpruefung mehr laeuft
+#   tk_errors                      NICHT autouse: faengt Exceptions in after()-Callbacks
+#                                  ab und laesst den Test fehlschlagen. Pro Modul mit
+#                                  pytestmark = pytest.mark.usefixtures("tk_errors")
+#                                  oder pro Test als Parameter einschalten.
+# ----------------------------------------------------------------------
+def _pump(root, cond, timeout=5.0):
+    end = time.time() + timeout
+    while time.time() < end:
+        root.update()
+        if cond():
+            return True
+        time.sleep(0.01)
+    root.update()
+    return bool(cond())
+
+
+@pytest.fixture
+def pump():
+    """pump(root, cond, timeout=5.0): Eventloop treiben, bis cond() wahr ist.
+    Liefert cond() (True = Bedingung erfuellt, False = Timeout)."""
+    return _pump
+
+
+@pytest.fixture
+def tk_frame(tk_root):
+    """Frame als Container fuer Test-Widgets. Bewusst kein Toplevel, damit der
+    Teardown-Hook (offene Toplevel-Fenster) nichts meldet."""
+    f = tk.Frame(tk_root)
+    f.pack()
+    yield f
+    try:
+        f.destroy()
+    except tk.TclError:
+        pass
+
+
+@pytest.fixture
+def dirchk(tk_root):
+    """tools.DirChecker auf dem Test-Root. Im Teardown darf keine Pruefung haengen."""
+    import tools
+    dc = tools.DirChecker(tk_root)
+    yield dc
+    done = _pump(tk_root, lambda: not dc.pending)
+    assert done, "Hintergrundpruefung haengt noch: %s" % list(dc.pending)
+
+
+@pytest.fixture
+def tk_errors(request):
+    """Faengt Exceptions in after()-Callbacks ab (Tk schreibt sie sonst nur nach stderr)
+    und laesst den Test fehlschlagen, wenn welche aufgetreten sind. Tests ohne tk_root
+    sind nicht betroffen (und brauchen kein Display)."""
+    if "tk_root" not in request.fixturenames:
+        yield []
+        return
+    root = request.getfixturevalue("tk_root")
+    errors = []
+    old = root.report_callback_exception
+    root.report_callback_exception = lambda exc, val, tb: errors.append(repr(val))
+    try:
+        yield errors
+    finally:
+        root.report_callback_exception = old
+        assert errors == [], "Exceptions in Tk-Callbacks: %s" % errors
