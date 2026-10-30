@@ -200,6 +200,43 @@ def test_fast_check_falls_through_when_server_reachable(monkeypatch, dirs):
 # ======================================================================
 # true_case_path
 # ======================================================================
+def test_case_walk_applies_lookup_to_every_component():
+    """Der Ablauf von true_case_path (plattformunabhaengig): JEDE Komponente wird nachgeschlagen,
+    auch die letzte. GetLongPathName allein liess die letzte in der uebergebenen Schreibweise."""
+    import tools
+    real = {r"c:\arbeit": "Arbeit", r"c:\arbeit\mixedcasedir": "MixedCaseDir"}
+    asked = []
+
+    def lookup(partial):
+        asked.append(partial)
+        return real.get(partial.lower())
+    assert tools._case_walk("c:/arbeit/mixedcasedir", lookup) == r"c:\Arbeit\MixedCaseDir"
+    assert asked == [r"c:\arbeit", r"c:\Arbeit\mixedcasedir"]   # bereits korrigierter Vorspann
+
+
+def test_case_walk_keeps_components_without_result_or_with_error():
+    import tools
+
+    def lookup(partial):
+        if partial.lower().endswith("boom"):
+            raise OSError("kaputt")
+        return {"x": "X"}.get(partial.rsplit("\\", 1)[-1].lower())
+    assert tools._case_walk(r"c:\x\unbekannt\boom\x", lookup) == r"c:\X\unbekannt\boom\X"
+
+
+def test_case_walk_leaves_drive_and_unc_root_alone():
+    import tools
+    asked = []
+
+    def lookup(partial):
+        asked.append(partial)
+        return None
+    assert tools._case_walk("//Server/Share/dir", lookup) == r"\\Server\Share\dir"
+    assert asked == [r"\\Server\Share\dir"]                       # Server/Share werden nicht abgefragt
+    assert tools._case_walk("D:/", lookup) == "D:\\"
+    assert tools._case_walk("rel/pfad", lookup) == r"rel\pfad"       # ohne Laufwerk, ohne fuehrendes \
+
+
 def test_true_case_path_empty_and_missing(dirs):
     import tools
     assert tools.true_case_path("") == ""

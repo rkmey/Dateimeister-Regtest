@@ -1045,3 +1045,201 @@ def tk_errors(request):
     finally:
         root.report_callback_exception = old
         assert errors == [], "Exceptions in Tk-Callbacks: %s" % errors
+        
+        
+# ----------------------------------------------------------------------
+# Ablauftest: echte Ini, echte Config-XML, echter init()-Weg
+#
+# indir ist der Vorrat direkt (wird vom Dateimeister jederzeit
+# reproduziert). outdir, datadir, config_xml und ini liegen in der
+# Sandbox und werden nach dem Test weggeworfen. Die Original-
+# verzeichnisse (Dateimeister/, Dateimeister-Testdaten/daten/ und
+# der Vorrat) werden nur gelesen, nie geschrieben.
+# ----------------------------------------------------------------------
+
+VORRAT_INDIR     = os.path.join(TESTDATEN_DIR, "regtest", "regtest-images")
+INI_ORIG         = os.path.join(PROGRAM_DIR, "Dateimeister.ini")
+TEST_CAMERA_NAME = "OTHER"
+
+
+def _read_ini_value(ini_path, section, key):
+    """Liest einen einzelnen Wert aus der Ini, ohne sie zu validieren."""
+    import configparser
+    cp = configparser.ConfigParser()
+    cp.read(ini_path, encoding="utf-8")
+    return cp.get(section, key)
+
+
+def _build_test_config_xml(real_config_xml, out_xml, indir, outdir,
+                            camera_name):
+    """Kopiert die Kamera-Struktur aus der echten Config-XML und
+    schreibt eine neue XML mit frischen indir/outdir-Eintraegen."""
+    import xml.etree.ElementTree as ET
+    tree = ET.parse(real_config_xml)
+    root = tree.getroot()
+
+    new_root = ET.Element(root.tag)
+    found = False
+    for cam in root.findall("camera"):
+        if cam.attrib.get("name", "").upper() == camera_name.upper():
+            new_root.append(cam)
+            found = True
+            break
+    if not found:
+        vorhandene = [c.attrib.get("name") for c in root.findall("camera")]
+        raise RuntimeError(
+            "Kamera '%s' nicht in %s gefunden. Vorhanden: %s" % (
+                camera_name, real_config_xml, vorhandene))
+
+    ET.SubElement(new_root, "indir",
+                  {"name": indir, "usedate": "20260101-00:00:00"})
+    ET.SubElement(new_root, "outdir",
+                  {"name": outdir, "usedate": "20260101-00:00:00"})
+
+    ET.ElementTree(new_root).write(out_xml, encoding="iso-8859-1",
+                                    xml_declaration=True)
+
+
+@pytest.fixture
+def journey_dirs(sandbox):
+    """Baut die Sandbox fuer einen Ablauftest.
+
+    indir ist der Vorrat direkt (wird vom Dateimeister jederzeit
+    reproduziert). outdir, datadir, config_xml und ini liegen in der
+    Sandbox und werden nach dem Test weggeworfen.
+
+    Diatisch-Pfade werden NICHT umgebogen: der Ablauftest nutzt
+    Diatisch nicht, und init() schreibt nicht in die Diatisch-Config-XML.
+    """
+    if not os.path.isdir(VORRAT_INDIR):
+        pytest.skip("Vorrat fehlt: %s" % VORRAT_INDIR)
+    if not os.path.isfile(INI_ORIG):
+        pytest.skip("Ini fehlt: %s" % INI_ORIG)
+
+    indir  = VORRAT_INDIR  # A: Vorrat direkt
+    outdir = os.path.join(sandbox.root, "outdir")
+    os.makedirs(outdir, exist_ok=True)
+
+    ini_text = open(INI_ORIG, encoding="utf-8").read()
+
+    # Templates in die Sandbox kopieren (immer die aktuellen)
+    templatefile_orig = _read_ini_value(INI_ORIG, "misc", "templatefile")
+    templatefile_dst = os.path.join(sandbox.root, "templates.txt")
+    shutil.copy(templatefile_orig, templatefile_dst)
+
+    # Test-Config-XML bauen (Kamera OTHER mit frischen indir/outdir)
+    real_config_xml = _read_ini_value(INI_ORIG, "misc", "config_files_xml")
+    config_xml_tmp = os.path.join(sandbox.xml, "config.xml")
+    _build_test_config_xml(real_config_xml, config_xml_tmp,
+                            indir, outdir, TEST_CAMERA_NAME)
+
+    # Nur die Pfade umbiegen, die der Test braucht
+    ini_text = ini_text.replace(real_config_xml, config_xml_tmp)
+    ini_text = ini_text.replace(templatefile_orig, templatefile_dst)
+    ini_text = ini_text.replace(
+        _read_ini_value(INI_ORIG, "dirs", "indir"), indir)
+    ini_text = ini_text.replace(
+        _read_ini_value(INI_ORIG, "dirs", "outdir"), outdir)
+    ini_text = ini_text.replace(
+        _read_ini_value(INI_ORIG, "dirs", "datadir"), sandbox.datadir)
+
+    ini_dst = os.path.join(sandbox.root, "Dateimeister.ini")
+    open(ini_dst, "w", encoding="utf-8").write(ini_text)
+
+    return {
+        "indir":      indir,
+        "outdir":     outdir,
+        "datadir":    sandbox.datadir,
+        "config_xml": config_xml_tmp,
+        "ini":        ini_dst,
+    }
+
+@pytest.fixture
+def journey_app(sandbox, journey_dirs, monkeypatch, tk_root):
+    """Baut ein echtes Dateimeister_support-Fenster ueber den normalen
+    init()-Weg. Verwendet ein tk.Toplevel auf dem session-weiten
+    tk_root, damit im Prozess nur EINE tk.Tk()-Instanz existiert.
+
+    Warum Toplevel statt Tk:
+        Mehrere tk.Tk()-Instanzen im selben Prozess hinterlassen einen
+        inkonsistenten Tk-Zustand (Ressourcenpfade, _default_root,
+        _tkinter-Caches). Nachfolgende tk.Tk()-Aufrufe koennen dann mit
+        "Can't find a usable tk.tcl" scheitern, was in der tk_root-
+        Fixture als "Kein Display" fehlinterpretiert wird. Ein Toplevel
+        auf dem session-weiten Root vermeidet das strukturell.
+
+    Setzt Globals nach dem Test zurueck, damit andere Tests nicht
+    die Sandbox-Werte sehen. Attribute, die vor dem Test noch nicht
+    existierten, werden nach dem Test entfernt (statt auf None gesetzt).
+
+    Wichtig: Globals.thumbnails / dict_thumbnails / dict_duplicates
+    enthalten MyThumbnail-Objekte, die ImageTk.PhotoImage halten.
+    Diese PhotoImage-Objekte gehoeren zu my_root. Wenn sie nach dem
+    Test in Globals stehen bleiben, versucht der naechste Test, sie in
+    seinem eigenen Tk-Root zu zeichnen, was mit
+    'image "pyimageN" doesn't exist' scheitert. Deshalb werden diese
+    Globals VOR my_root.destroy() geleert.
+    """
+    import tkinter as tk
+    import tools
+
+    _MISSING = object()
+    saved_globals = {}
+    for k in ("config_files_xml", "datadir", "config_files_subdir",
+              "cmd_files_subdir", "temp_files_subdir", "temp_files_path",
+              "uncomment", "imagetype", "imagetypes_selected"):
+        saved_globals[k] = getattr(tools.Globals, k, _MISSING)
+
+    # Kein eigenes tk.Tk() mehr: Toplevel auf dem session-weiten Root.
+    # Damit gibt es pro Prozess nur eine Tk-Instanz, und _default_root
+    # wird nicht angetastet.
+    my_root = tk.Toplevel(tk_root)
+    my_root.withdraw()
+
+    monkeypatch.chdir(sandbox.root)
+
+    from Dateimeister_support import Dateimeister_support
+    app = Dateimeister_support(my_root, debug="y")
+    try:
+        yield app
+    finally:
+        try:
+            app.close_handler()
+        except Exception:
+            pass
+
+        # PhotoImage-Referenzen aus Globals entfernen, BEVOR my_root
+        # zerstoert wird. Sonst versucht der naechste Test, diese Bilder
+        # in seinem eigenen Tk-Root zu zeichnen, was mit
+        # 'image "pyimageN" doesn't exist' scheitert.
+        tools.Globals.thumbnails = {}
+        tools.Globals.dict_thumbnails = {}
+        tools.Globals.dict_duplicates = {}
+        tools.Globals.dict_duplicates_sourcefiles = {}
+        tools.Globals.list_result_diatisch = []
+        # EventManager zuruecksetzen: die Listener (MyDuplicates,
+        # MyFSImage, MyFSVideo) zeigen auf zerstoerte Objekte.
+        tools.Globals.eventManager = tools.EventManager()
+
+        try:
+            my_root.destroy()
+        except tk.TclError:
+            pass
+        # _default_root muss NICHT restauriert werden: wir haben es nicht
+        # angetastet. saved_default_root entfaellt deshalb komplett.
+
+        for k, v in saved_globals.items():
+            if v is _MISSING:
+                if hasattr(tools.Globals, k):
+                    delattr(tools.Globals, k)
+            else:
+                setattr(tools.Globals, k, v)
+
+
+                
+@pytest.fixture(scope="session")
+def program_dir():
+    """Pfad zum Dateimeister-Programmverzeichnis (für statische Checks)."""
+    return PROGRAM_DIR
+    
+    
