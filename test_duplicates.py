@@ -554,3 +554,429 @@ def test_stop_all_players_unknown_imagetype_is_safe(duplicates_window):
         win.stop_all_players()
     finally:
         tools.Globals.imagetype = old
+        
+# ======================================================================
+# Block H: on_closing (eingehendes Closing-Event)
+# ======================================================================
+
+class _FakeFSImage:
+    """Minimal-Stand-in fuer ein MyFSImage/MyFSVideo-Objekt in dict_file_image."""
+    def __init__(self, filename):
+        self.filename = filename
+
+
+def test_on_closing_removes_own_fs_entry(duplicates_window):
+    """Closing-Event mit event.obj == eigener FS-Eintrag entfernt den Eintrag."""
+    win, caller, info = duplicates_window
+    fake_fs = _FakeFSImage("dummy.jpg")
+    win.dict_file_image["dummy.jpg"] = fake_fs
+
+    win.on_closing(ClosingEvent("dummy.jpg", fake_fs))
+
+    assert "dummy.jpg" not in win.dict_file_image
+
+
+def test_on_closing_keeps_entry_of_other_object(duplicates_window):
+    """Closing-Event mit event.obj != gespeichertem Objekt laesst den Eintrag stehen."""
+    win, caller, info = duplicates_window
+    stored = _FakeFSImage("dummy.jpg")
+    other  = _FakeFSImage("dummy.jpg")
+    win.dict_file_image["dummy.jpg"] = stored
+
+    win.on_closing(ClosingEvent("dummy.jpg", other))
+
+    assert "dummy.jpg" in win.dict_file_image
+    assert win.dict_file_image["dummy.jpg"] is stored
+
+
+def test_on_closing_unknown_filename_is_safe(duplicates_window):
+    """Closing-Event fuer ein File, das nicht in dict_file_image steht, ist ein No-Op."""
+    win, caller, info = duplicates_window
+    win.on_closing(ClosingEvent("does/not/exist.jpg", _FakeFSImage("does/not/exist.jpg")))
+    # keine Exception, dict unveraendert
+    assert win.dict_file_image == {}
+
+
+def test_on_closing_empty_filename(duplicates_window):
+    """Closing-Event mit leerem filename (Hauptfenster schliesst sich) ist safe."""
+    win, caller, info = duplicates_window
+    win.on_closing(ClosingEvent("", win))
+    assert win.dict_file_image == {}
+
+
+def test_on_closing_removes_only_matching_entry(duplicates_window):
+    """Bei mehreren Eintraegen wird nur der passende entfernt."""
+    win, caller, info = duplicates_window
+    fa = _FakeFSImage("a.jpg")
+    fb = _FakeFSImage("b.jpg")
+    win.dict_file_image["a.jpg"] = fa
+    win.dict_file_image["b.jpg"] = fb
+
+    win.on_closing(ClosingEvent("a.jpg", fa))
+
+    assert "a.jpg" not in win.dict_file_image
+    assert "b.jpg" in win.dict_file_image
+    assert win.dict_file_image["b.jpg"] is fb   
+
+# ======================================================================
+# Block I: get_thumbnail_by_position (binaere Suche)
+# ======================================================================
+
+def test_get_thumbnail_by_position_start(duplicates_window):
+    """Position genau am Start des ersten Thumbnails liefert das erste Thumbnail."""
+    win, caller, info = duplicates_window
+    win.display_duplicate(info["target"])
+    imagetype = info["imagetype"]
+    thumbs = win.thumbnails_duplicates[imagetype]
+    first = thumbs[0]
+    thumb, idx = win.get_thumbnail_by_position(first.getStart(), 5)
+    assert thumb is first
+    assert idx == 0
+
+
+def test_get_thumbnail_by_position_end(duplicates_window):
+    """Position genau am End des ersten Thumbnails liefert das erste Thumbnail."""
+    win, caller, info = duplicates_window
+    win.display_duplicate(info["target"])
+    imagetype = info["imagetype"]
+    thumbs = win.thumbnails_duplicates[imagetype]
+    first = thumbs[0]
+    thumb, idx = win.get_thumbnail_by_position(first.getEnd(), 5)
+    assert thumb is first
+    assert idx == 0
+
+
+def test_get_thumbnail_by_position_middle(duplicates_window):
+    """Position in der Mitte des ersten Thumbnails liefert das erste Thumbnail."""
+    win, caller, info = duplicates_window
+    win.display_duplicate(info["target"])
+    imagetype = info["imagetype"]
+    thumbs = win.thumbnails_duplicates[imagetype]
+    first = thumbs[0]
+    mid = (first.getStart() + first.getEnd()) // 2
+    thumb, idx = win.get_thumbnail_by_position(mid, 5)
+    assert thumb is first
+    assert idx == 0
+
+
+def test_get_thumbnail_by_position_second(duplicates_window):
+    """Position mitten im zweiten Thumbnail liefert das zweite Thumbnail."""
+    win, caller, info = duplicates_window
+    win.display_duplicate(info["target"])
+    imagetype = info["imagetype"]
+    thumbs = win.thumbnails_duplicates[imagetype]
+    if len(thumbs) < 2:
+        pytest.skip("Nur ein Thumbnail vorhanden")
+    second = thumbs[1]
+    mid = (second.getStart() + second.getEnd()) // 2
+    thumb, idx = win.get_thumbnail_by_position(mid, 5)
+    assert thumb is second
+    assert idx == 1
+
+
+def test_get_thumbnail_by_position_before_first(duplicates_window):
+    """Position vor dem ersten Thumbnail (negativ) liefert None."""
+    win, caller, info = duplicates_window
+    win.display_duplicate(info["target"])
+    thumb, idx = win.get_thumbnail_by_position(-1000, 5)
+    assert thumb is None
+    assert idx is None
+
+
+def test_get_thumbnail_by_position_after_last(duplicates_window):
+    """Position weit hinter dem letzten Thumbnail liefert None."""
+    win, caller, info = duplicates_window
+    win.display_duplicate(info["target"])
+    imagetype = info["imagetype"]
+    thumbs = win.thumbnails_duplicates[imagetype]
+    last = thumbs[-1]
+    thumb, idx = win.get_thumbnail_by_position(last.getEnd() + 10000, 5)
+    assert thumb is None
+    assert idx is None
+
+
+def test_get_thumbnail_by_position_empty(duplicates_window):
+    """Ohne Thumbnails liefert die Suche None (keine Exception)."""
+    win, caller, info = duplicates_window
+    # display_duplicate absichtlich NICHT aufrufen
+    thumb, idx = win.get_thumbnail_by_position(0, 0)
+    assert thumb is None
+    assert idx is None
+
+
+def test_get_thumbnail_by_position_in_gap(duplicates_window):
+    """Position in der Luecke zwischen zwei Thumbnails liefert None."""
+    win, caller, info = duplicates_window
+    win.display_duplicate(info["target"])
+    imagetype = info["imagetype"]
+    thumbs = win.thumbnails_duplicates[imagetype]
+    if len(thumbs) < 2:
+        pytest.skip("Nur ein Thumbnail vorhanden")
+    first_end = thumbs[0].getEnd()
+    second_start = thumbs[1].getStart()
+    # Die Luecke ist normalerweise Globals.gap breit. Wenn sie 0 ist,
+    # ueberlappt sie sich, dann kein Testfall.
+    if second_start <= first_end:
+        pytest.skip("Keine Luecke zwischen den Thumbnails")
+    mid_gap = (first_end + second_start) // 2
+    thumb, idx = win.get_thumbnail_by_position(mid_gap, 5)
+    assert thumb is None
+    assert idx is None
+ 
+# ======================================================================
+# Block J: canvas_show -> display_image
+# ======================================================================
+
+def test_canvas_show_calls_display_image_on_hit(
+        duplicates_window, monkeypatch):
+    """Klick auf ein Thumbnail ruft display_image mit diesem Thumbnail auf."""
+    win, caller, info = duplicates_window
+    win.display_duplicate(info["target"])
+    imagetype = info["imagetype"]
+    thumbs = win.thumbnails_duplicates[imagetype]
+    first = thumbs[0]
+
+    calls = []
+    monkeypatch.setattr(win, "display_image", lambda t: calls.append(t))
+
+    # Klick genau in die Mitte des ersten Thumbnails
+    mid_x = (first.getStart() + first.getEnd()) // 2
+    ev = _FakeMouseEvent(x=mid_x, y=5)
+    win.canvas_show(ev)
+
+    assert calls == [first]
+
+
+def test_canvas_show_no_hit_does_nothing(
+        duplicates_window, monkeypatch):
+    """Klick ausserhalb jedes Thumbnails ruft display_image nicht auf."""
+    win, caller, info = duplicates_window
+    win.display_duplicate(info["target"])
+    imagetype = info["imagetype"]
+    last = win.thumbnails_duplicates[imagetype][-1]
+
+    calls = []
+    monkeypatch.setattr(win, "display_image", lambda t: calls.append(t))
+
+    # weit hinter dem letzten Thumbnail
+    ev = _FakeMouseEvent(x=last.getEnd() + 1000, y=5)
+    win.canvas_show(ev)
+
+    assert calls == []
+
+
+def test_canvas_image_show_uses_self_event(
+        duplicates_window, monkeypatch):
+    """canvas_image_show (Kontextmenue) delegiert mit self.event an canvas_show."""
+    win, caller, info = duplicates_window
+    win.display_duplicate(info["target"])
+    imagetype = info["imagetype"]
+    first = win.thumbnails_duplicates[imagetype][0]
+
+    calls = []
+    monkeypatch.setattr(win, "display_image", lambda t: calls.append(t))
+
+    mid_x = (first.getStart() + first.getEnd()) // 2
+    win.event = _FakeMouseEvent(x=mid_x, y=5)
+    win.canvas_image_show()
+
+    assert calls == [first]
+
+
+def test_canvas_show_focuses_canvas(duplicates_window, monkeypatch):
+    """canvas_show setzt den Fokus auf die Canvas, bevor display_image laeuft."""
+    win, caller, info = duplicates_window
+    win.display_duplicate(info["target"])
+    imagetype = info["imagetype"]
+    first = win.thumbnails_duplicates[imagetype][0]
+
+    focused = []
+    original_focus = win.f.focus_set
+    monkeypatch.setattr(win.f, "focus_set", lambda: focused.append(True))
+    monkeypatch.setattr(win, "display_image", lambda t: None)
+
+    mid_x = (first.getStart() + first.getEnd()) // 2
+    win.canvas_show(_FakeMouseEvent(x=mid_x, y=5))
+
+    assert focused == [True]
+
+# ======================================================================
+# Block K: resize
+# ======================================================================
+
+def test_resize_calls_display_duplicate_on_size_change(
+        duplicates_window, monkeypatch):
+    """Wenn sich die Fenstergroesse aendert, wird display_duplicate aufgerufen."""
+    win, caller, info = duplicates_window
+    win.display_duplicate(info["target"])
+    win.thisduplicate = info["target"]
+
+    # Groesse "alt" setzen, sodass resize() eine Aenderung erkennt
+    win.width  = 100
+    win.height = 100
+    monkeypatch.setattr(win.root, "winfo_width",  lambda: 800)
+    monkeypatch.setattr(win.root, "winfo_height", lambda: 600)
+
+    calls = []
+    monkeypatch.setattr(win, "display_duplicate", lambda t: calls.append(t))
+
+    win.resize()
+
+    assert calls == [info["target"]]
+
+
+def test_resize_no_size_change_does_not_redraw(
+        duplicates_window, monkeypatch):
+    """Ohne Aenderung der Fenstergroesse wird display_duplicate nicht aufgerufen."""
+    win, caller, info = duplicates_window
+    win.display_duplicate(info["target"])
+    win.thisduplicate = info["target"]
+
+    # Groesse "aktuell" setzen, sodass resize() keine Aenderung erkennt
+    win.width  = 800
+    win.height = 600
+    monkeypatch.setattr(win.root, "winfo_width",  lambda: 800)
+    monkeypatch.setattr(win.root, "winfo_height", lambda: 600)
+
+    calls = []
+    monkeypatch.setattr(win, "display_duplicate", lambda t: calls.append(t))
+
+    win.resize()
+
+    assert calls == []
+
+
+def test_resize_without_thisduplicate_does_not_redraw(
+        duplicates_window, monkeypatch):
+    """Ohne ausgewaehlte Dublette wird display_duplicate nicht aufgerufen."""
+    win, caller, info = duplicates_window
+    # display_duplicate absichtlich NICHT aufrufen -> thisduplicate bleibt None
+    assert win.thisduplicate is None
+
+    win.width  = 100
+    win.height = 100
+    monkeypatch.setattr(win.root, "winfo_width",  lambda: 800)
+    monkeypatch.setattr(win.root, "winfo_height", lambda: 600)
+
+    calls = []
+    monkeypatch.setattr(win, "display_duplicate", lambda t: calls.append(t))
+
+    win.resize()
+
+    assert calls == []
+
+
+def test_resize_updates_font_size(duplicates_window, monkeypatch):
+    """Bei Groessenaenderung wird die Schriftgroesse neu berechnet."""
+    win, caller, info = duplicates_window
+    win.width  = 100
+    win.height = 100
+    monkeypatch.setattr(win.root, "winfo_width",  lambda: 1920)
+    monkeypatch.setattr(win.root, "winfo_height", lambda: 1080)
+
+    font_sizes = []
+    original_configure = win.text_font.configure
+    monkeypatch.setattr(win.text_font, "configure",
+                        lambda **kw: font_sizes.append(kw.get("size")))
+
+    win.resize()
+
+    assert len(font_sizes) == 1
+    assert font_sizes[0] is not None
+
+
+def test_resize_updates_width_height(duplicates_window, monkeypatch):
+    """Nach resize() sind self.width / self.height auf die neuen Werte gesetzt."""
+    win, caller, info = duplicates_window
+    win.width  = 100
+    win.height = 100
+    monkeypatch.setattr(win.root, "winfo_width",  lambda: 1024)
+    monkeypatch.setattr(win.root, "winfo_height", lambda: 768)
+
+    win.resize()
+
+    assert win.width  == 1024
+    assert win.height == 768 
+    
+    
+# ======================================================================
+# Block L: xview (Scrollen)
+# ======================================================================
+
+def test_xview_scroll_units_right_moves_canvas(duplicates_window):
+    """xview('scroll', 1, 'units') scrollt die Canvas nach rechts."""
+    win, caller, info = duplicates_window
+    win.display_duplicate(info["target"])
+    win.f.xview('moveto', 0)
+    win.f.update()
+    before = win.f.canvasx(0)
+
+    win.xview("scroll", 1, "units")
+    win.f.update()
+    after = win.f.canvasx(0)
+
+    # Bei mehreren Thumbnails sollte sich die Position geaendert haben.
+    # Bei nur einem Thumbnail bleibt sie gleich (kein Scroll noetig).
+    if len(win.thumbnails_duplicates[info["imagetype"]]) > 1:
+        assert after > before
+
+
+def test_xview_scroll_units_left_at_start_does_nothing(duplicates_window):
+    """xview('scroll', -1, 'units') am Anfang scrollt nicht ins Negative."""
+    win, caller, info = duplicates_window
+    win.display_duplicate(info["target"])
+    win.f.xview('moveto', 0)
+    win.f.update()
+    before = win.f.xview()
+
+    win.xview("scroll", -1, "units")
+    win.f.update()
+    after = win.f.xview()
+
+    assert before == after
+
+
+def test_xview_moveto_start(duplicates_window):
+    """xview('moveto', 0) setzt die Position auf den Anfang."""
+    win, caller, info = duplicates_window
+    win.display_duplicate(info["target"])
+    # erst nach rechts scrollen (falls mehrere Thumbnails)
+    win.f.xview('moveto', 1.0)
+    win.f.update()
+
+    win.xview("moveto", 0)
+    win.f.update()
+
+    # xview() liefert ein Tupel (first, last) der sichtbaren Fraktion.
+    # Bei moveto 0 ist first == 0.0.
+    first, last = win.f.xview()
+    assert first == 0.0
+    
+
+def test_xview_no_args_delegates_to_canvas(duplicates_window, monkeypatch):
+    """xview() ohne Argumente wird an self.f.xview delegiert (kein Fehler)."""
+    win, caller, info = duplicates_window
+    win.display_duplicate(info["target"])
+
+    calls = []
+    original_xview = win.f.xview
+    monkeypatch.setattr(win.f, "xview", lambda *a: calls.append(a))
+
+    # ohne args -> self.f.xview(*args) mit args = ()
+    win.xview()
+
+    assert calls == [()]
+
+
+def test_xview_scroll_units_at_end_does_not_crash(duplicates_window):
+    """xview('scroll', 1, 'units') am rechten Rand wirft keinen Fehler."""
+    win, caller, info = duplicates_window
+    win.display_duplicate(info["target"])
+    win.f.xview('moveto', 1.0)
+    win.f.update()
+
+    # sollte einfach nichts tun, nicht crashen
+    win.xview("scroll", 1, "units")
+    win.f.update()
+
+    
