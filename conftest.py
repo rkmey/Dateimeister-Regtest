@@ -1236,6 +1236,80 @@ def journey_app(sandbox, journey_dirs, monkeypatch, tk_root):
                 setattr(tools.Globals, k, v)
 
 
+# ----------------------------------------------------------------------
+# Exec-Fenster (Dateimeister_exec.MyExecWindow)
+# ----------------------------------------------------------------------
+@pytest.fixture
+def exec_scripts(sandbox):
+    """Legt drei Mini-Cmd-Skripte (copy, delete, delrelpath) in der Sandbox an.
+
+    Liefert ein dict:
+        {
+            "copy":       Pfad der Copy-Cmd-Datei,
+            "delete":     Pfad der Delete-Cmd-Datei,
+            "delrelpath": Pfad der Delrelpath-Cmd-Datei,
+            "datadir":    sandbox.datadir,
+            "cmd_subdir": "daten/cmd",
+        }
+    """
+    cmd_subdir = "daten/cmd"
+    cmd_dir = os.path.join(sandbox.datadir, "daten", "cmd")
+    os.makedirs(cmd_dir, exist_ok=True)
+    paths = {}
+    for kind, content in (
+        ("copy", "@echo off\r\nREM copy script\r\necho copy-ok\r\n"),
+        ("delete", "@echo off\r\nREM delete script\r\necho delete-ok\r\n"),
+        ("delrelpath", "@echo off\r\nREM delrelpath script\r\necho delrelpath-ok\r\n"),
+    ):
+        p = os.path.join(cmd_dir, f"_{kind}.cmd")
+        with open(p, "w", encoding="latin-1") as f:
+            f.write(content)
+        paths[kind] = p
+    return {
+        "copy": paths["copy"],
+        "delete": paths["delete"],
+        "delrelpath": paths["delrelpath"],
+        "datadir": sandbox.datadir,
+        "cmd_subdir": cmd_subdir,
+    }
+
+
+def _make_exec_window(tk_root, scripts, with_delrelpath):
+    """Hilfsfunktion: baut ein MyExecWindow mit den uebergebenen
+    Skript-Pfaden und gibt es zurueck. Kein Cleanup hier - das macht
+    die aufrufende Fixture."""
+    import Dateimeister_exec as DE
+    return DE.MyExecWindow(
+        pmain=None,
+        datadir=scripts["datadir"],
+        cmd_files_subdir=scripts["cmd_subdir"],
+        imagetype="JPEG",
+        copyscript=scripts["copy"],
+        deletescript=scripts["delete"],
+        delrelpathscript=scripts["delrelpath"] if with_delrelpath else None,
+    )
+
+
+@pytest.fixture
+def exec_window_factory(tk_root, exec_scripts):
+    """Factory, die auf Wunsch ein MyExecWindow baut und die Fenster
+    fuer sauberes Cleanup im Teardown sammelt."""
+    created = []
+
+    def _factory(with_delrelpath=True):
+        win = _make_exec_window(tk_root, exec_scripts, with_delrelpath)
+        created.append(win)
+        return win
+
+    try:
+        yield _factory
+    finally:
+        for win in created:
+            try:
+                win.close_handler()
+            except Exception:
+                pass
+
                 
 @pytest.fixture(scope="session")
 def program_dir():
