@@ -9,6 +9,12 @@ Alle Tests laufen unbeaufsichtigt:
   * messagebox und tools.info_box werden global in conftest.py gemockt
   * pytest-timeout bricht hängende Tests nach 60 s ab
   * nach jedem Test wird geprüft, ob Toplevel-Fenster offen sind
+
+Wichtig: MyCameraTreeview erwartet den Pfad zur Config-XML als
+Parameter xmlfile (nicht aus Globals). Die Fixture tmp_xml setzt
+Globals.config_files_xml; make_camera_window() reicht diesen Wert
+explizit weiter. Ohne xmlfile macht __init__ ein frühes return,
+und dann fehlen self.tv, self.cams_changed, self.text, self.UR.
 """
 
 import pytest
@@ -20,9 +26,22 @@ import pytest
 
 def make_camera_window(dummy_main, proctypes="jpeg,use_jpeg,video", debug=False,
                        cameraname="DIATISCH"):
+    """Baut ein MyCameraTreeview-Fenster mit der aktuellen Test-XML.
+
+    xmlfile wird explizit aus Globals.config_files_xml gelesen - die
+    Fixture tmp_xml / tmp_xml_incomplete setzt diesen Wert. Ohne den
+    Parameter würde __init__ früh returnen und ein halbfertiges Objekt
+    hinterlassen (kein self.tv, kein self.cams_changed, ...)."""
     from Dateimeister_camera import MyCameraTreeview
-    return MyCameraTreeview(pmain=dummy_main, proctypes=proctypes,
-                            debug=debug, cameraname=cameraname)
+    import tools
+    return MyCameraTreeview(
+        pmain=dummy_main,
+        proctypes=proctypes,
+        debug=debug,
+        cameraname=cameraname,
+        xmlfile=tools.Globals.config_files_xml,
+    )
+
 
 def find_iid_by_text(tv, text, tag=None):
     for iid in tv.get_children(""):
@@ -55,8 +74,7 @@ def test_treeview_from_xml_builds_hierarchy(
     """Prüft, dass treeview_from_xml() die Kamera-Hierarchie aufbaut.
 
     Die Spalten sind col_modified, col_subdir, col_process (kein
-    col_rendertype mehr).
-    """
+    col_rendertype mehr)."""
     win = make_camera_window(dummy_main)
     try:
         tv = win.tv
@@ -76,7 +94,8 @@ def test_treeview_from_xml_prompts_for_missing_process_image(
         tk_root, tmp_xml_incomplete, dummy_main, globals_event_manager,
         globals_screen, globals_datadir, fake_ur, silence_tooltips,
         silence_messageboxes):
-    """Bei fehlendem process_image muss ein Forced Dialog erscheinen."""
+    """Bei fehlendem process_image muss ein showinfo-Dialog erscheinen,
+    und der Dialog geht in den PROCESS_IMAGE-Modus."""
     win = make_camera_window(dummy_main, cameraname="TESTCAM")
     try:
         info_calls = [c for c in silence_messageboxes if c[0] == "info"]
@@ -480,4 +499,3 @@ def test_apply_new_calls_historize(
         assert after > before, "historize_process wurde nicht aufgerufen"
     finally:
         win.close_handler()
-        
