@@ -90,7 +90,7 @@ def _global_info_box_mock(monkeypatch):
     import tools
     calls = []
 
-    def _stub(nachricht, level="info"):
+    def _stub(nachricht, level="info", parent=None):
         calls.append((nachricht, level))
 
     monkeypatch.setattr(tools, "info_box", _stub)
