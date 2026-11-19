@@ -70,6 +70,10 @@ def exec_sandbox(sandbox):
     Die .cmd-Skripte spiegeln die Struktur der echten Dateien: fuer jede
     Quelldatei in regtest-images/jpeg/<relpath> wird im Ziel
     sandbox.images/dst/<relpath> angelegt.
+
+    Die Plausibilitaetspruefung (count_expected_copies) wird hier nicht
+    abgedeckt; die drei Parameter dict_target_count / dict_source_target /
+    dup_key werden deshalb leer belegt.
     """
     if not os.path.isdir(SOURCE_ROOT):
         pytest.skip("Regtest-Images fehlen: %s" % SOURCE_ROOT)
@@ -148,6 +152,9 @@ def exec_sandbox(sandbox):
         datadir=sandbox.datadir,
         cmd_files_subdir="daten/cmd",
         imagetype="JPEG",
+        dict_target_count={},          # leer -> keine erwarteten Kopien
+        dict_source_target={},          # leer -> keine Quellen
+        dup_key=lambda p: p,            # Identitaet reicht fuer den Test
         copyscript=copy_path,
         deletescript=delete_path,
         delrelpathscript=delrelpath_path,

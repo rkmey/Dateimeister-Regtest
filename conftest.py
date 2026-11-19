@@ -1273,17 +1273,26 @@ def exec_scripts(sandbox):
         "cmd_subdir": cmd_subdir,
     }
 
-
 def _make_exec_window(tk_root, scripts, with_delrelpath):
     """Hilfsfunktion: baut ein MyExecWindow mit den uebergebenen
     Skript-Pfaden und gibt es zurueck. Kein Cleanup hier - das macht
-    die aufrufende Fixture."""
+    die aufrufende Fixture.
+
+    Die drei neuen Parameter dict_target_count, dict_source_target und
+    dup_key werden mit leeren Defaults belegt: die Tests pruefen den
+    UI-Aufbau und den exec_handler, nicht die Plausibilitaetspruefung.
+    count_expected_copies liefert dann 0/0/0, was fuer die Tests
+    ausreicht.
+    """
     import Dateimeister_exec as DE
     return DE.MyExecWindow(
         pmain=None,
         datadir=scripts["datadir"],
         cmd_files_subdir=scripts["cmd_subdir"],
         imagetype="JPEG",
+        dict_target_count={},          # leer -> keine erwarteten Kopien
+        dict_source_target={},          # leer -> keine Quellen
+        dup_key=lambda p: p,            # Identitaet reicht fuer den Test
         copyscript=scripts["copy"],
         deletescript=scripts["delete"],
         delrelpathscript=scripts["delrelpath"] if with_delrelpath else None,
